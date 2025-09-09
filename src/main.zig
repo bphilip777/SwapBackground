@@ -8,74 +8,33 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allo = gpa.allocator();
     defer std.debug.assert(gpa.deinit() == .ok);
-    // subpaths
+    // get home
     const home: []const u8 = try getHomeDir(allo);
-    defer allo.free(home);
-    const dir_path_from_home: []const u8 = switch (@import("builtin").os.tag) {
-        .windows => "\\Pictures\\Wallpapers",
-        .linux, .macos => "/Pictures",
-        else => unreachable,
-    };
-    // abs path
-    const wallpapers_path = try std.fs.path.join(allo, &.{ home, dir_path_from_home });
+    // wallpapers
+    const wallpapers_path = try wallpapersPath(allo, home);
     defer allo.free(wallpapers_path);
     print("Wallpapers Path: {s}\n", .{wallpapers_path});
     // clone wallpapers
-    if (!dirExists(wallpapers_path)) {
-        const args = [_][]const u8{
-            "git",
-            "clone",
-            "https://github.com/bphilip777/Wallpapers",
-            wallpapers_path,
-        };
-        var child = std.process.Child.init(&args, allo);
-        const result = try child.spawnAndWait();
-        switch (result) {
-            .Exited => {},
-            else => {
-                print("{s} {s} {s} {s} failed.\n", .{
-                    args[0],
-                    args[1],
-                    args[2],
-                    wallpapers_path,
-                });
-                return;
-            },
-        }
-    }
-    // walk dir - choose random image
-    var dir = try std.fs.openDirAbsolute(wallpapers_path, .{ .iterate = true });
-    defer dir.close();
-    // init pic mem
-    var pics: std.ArrayList([]const u8) = try .initCapacity(allo, 8);
-    defer pics.deinit(allo);
-    defer for (pics.items) |pic| allo.free(pic);
-    // get pics
-    var it = dir.iterate();
-    while (try it.next()) |item| {
-        switch (item.kind) {
-            .file => {
-                print("{s}\n", .{item.name});
-            },
-            else => continue,
-        }
-    }
-
-    // // env var settings.json
-    // const local_dir = std.process.getEnvVarOwned(allo, "LOCALAPPDATA") catch |err| switch (err) {
-    //     error.EnvironmentVariableNotFound => {
-    //         print("Local App Data not found.\n", .{});
-    //         return;
-    //     },
-    //     else => return err,
-    // };
-    // defer allo.free(local_dir);
-    // // look for settings.json
-    // const settings_json_path = try std.fs.path.join(
-    //     allo,
-    //     &.{ home, "AppData\\Local\\Packages\\Microsoft.WindowsTerminal_8wekyb3d8bbwe\\LocalState\\settings.json" },
-    // );
-    // defer allo.free(settings_json_path);
+    if (!dirExists(wallpapers_path)) try cloneWallpapers(allo, wallpapers_path);
+    // get image name
+    const img_name = try pickImage(allo, wallpapers_path);
+    defer allo.free(img_name);
+    print("{s}\n", .{img_name});
+    // env var settings.json
+    const local_dir = std.process.getEnvVarOwned(allo, "LOCALAPPDATA") catch |err| switch (err) {
+        error.EnvironmentVariableNotFound => {
+            print("Local App Data not found.\n", .{});
+            return;
+        },
+        else => return err,
+    };
+    defer allo.free(local_dir);
+    // look for settings.json
+    const settings_json_path = try std.fs.path.join(
+        allo,
+        &.{ home, "AppData\\Local\\Packages\\Microsoft.WindowsTerminal_8wekyb3d8bbwe\\LocalState\\settings.json" },
+    );
+    defer allo.free(settings_json_path);
 
     // find new image
 
@@ -118,4 +77,79 @@ fn getHomeDir(allo: Allocator) ![]const u8 {
         else => return err,
     };
     return home;
+}
+
+fn match(name: []const u8, needles: []const []const u8) bool {
+    for (needles) |needle| {
+        if (std.mem.eql(u8, name, needle)) return true;
+    } else return false;
+}
+
+fn wallpapersPath(
+    allo: Allocator,
+    home: []const u8,
+) ![]const u8 {
+    // subpaths
+    defer allo.free(home);
+    const dir_path_from_home: []const u8 = switch (@import("builtin").os.tag) {
+        .windows => "\\Pictures\\Wallpapers",
+        .linux, .macos => "/Pictures",
+        else => unreachable,
+    };
+    return try std.fs.path.join(allo, &.{ home, dir_path_from_home });
+}
+
+fn cloneWallpapers(allo: Allocator, path: []const u8) !void {
+    const args = [_][]const u8{
+        "git",
+        "clone",
+        "https://github.com/bphilip777/Wallpapers",
+        path,
+    };
+    var child = std.process.Child.init(&args, allo);
+    const result = try child.spawnAndWait();
+    switch (result) {
+        .Exited => {},
+        else => {
+            print("Failed: {s}\n", .{@tagName(result)});
+            print("{s} {s} {s} {s} failed.\n", .{
+                args[0],
+                args[1],
+                args[2],
+                path,
+            });
+        },
+    }
+}
+
+fn pickImage(allo: Allocator, pics_path: []const u8) ![]const u8 {
+    // walk dir - choose random image
+    var dir = try std.fs.openDirAbsolute(pics_path, .{ .iterate = true });
+    defer dir.close();
+    // init pic mem
+    var pics: std.ArrayList([]const u8) = try .initCapacity(allo, 16);
+    defer pics.deinit(allo);
+    defer for (pics.items) |pic| allo.free(pic);
+    // get pics
+    var it = dir.iterate();
+    const whitelisted_exts = [_][]const u8{ "jpg", "jpeg", "png" };
+    while (try it.next()) |item| {
+        switch (item.kind) {
+            .file => {
+                const dot = std.mem.lastIndexOfScalar(u8, item.name, '.') orelse continue;
+                const ext = item.name[dot + 1 .. item.name.len];
+                if (!match(ext, &whitelisted_exts)) continue;
+                const new_name = try allo.dupe(u8, item.name);
+                try pics.append(allo, new_name);
+            },
+            else => continue,
+        }
+    }
+    // select random pic
+    var RndGen = std.Random.DefaultPrng.init(@as(u64, @abs(std.time.timestamp())));
+    const rng = RndGen.random();
+    const rnd = rng.intRangeLessThan(u8, 0, @truncate(pics.items.len));
+    const name = pics.items[rnd];
+    // return copy of the name
+    return try allo.dupe(u8, name);
 }
