@@ -1,7 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const print = std.debug.print;
-const Reader = @import("reader.zig");
 
 pub fn main() !void {
     // mem
@@ -11,58 +10,51 @@ pub fn main() !void {
     // get home
     const home: []const u8 = try homeDir(allo);
     defer allo.free(home);
-    print("{s}\n", .{home});
     // wallpapers
     const wallpapers_path = try wallpapersPath(allo, home);
     defer allo.free(wallpapers_path);
-    print("{s}\n", .{wallpapers_path});
     // clone wallpapers
     if (!dirExists(wallpapers_path)) try cloneWallpapers(allo, wallpapers_path);
     // get image name
     const img_name = try pickImage(allo, wallpapers_path);
     defer allo.free(img_name);
-    print("{s}\n", .{img_name});
     // full image name
     const img_path = try std.fs.path.join(allo, &.{ wallpapers_path, img_name });
     defer allo.free(img_path);
-    print("{s}\n", .{img_path});
     // env var settings.json
     const settings_json_path = try settingsJson(allo, home);
     defer allo.free(settings_json_path);
-    print("{s}\n", .{settings_json_path});
-    // read file line by line
-    var reader = try Reader.init(settings_json_path);
-    defer reader.deinit();
-    // init storage
-    var data: std.ArrayList([]const u8) = try .initCapacity(allo, 1024);
-    defer data.deinit(allo);
-    defer for (data.items) |item| allo.free(item);
-    // reader
-    while (reader.read()) |line| {
-        const newline = try allo.dupe(u8, line);
-        try data.append(allo, newline);
-    }
-    // write file
-    print("Img path: {s}\n", .{img_path});
-    // var file = try std.fs.createFileAbsolute(settings_json_path, .{});
-    // defer file.close();
-    for (data.items) |line| {
-        if (std.mem.containsAtLeast(u8, line, 1, "\"backgroundImage\"")) { // change line
-            const colon = std.mem.indexOfScalar(u8, line, ':').?;
-            const newline = try std.fmt.allocPrint(
-                allo,
-                "{s}: \"{s}\",\n",
-                .{ line[0..colon], img_path },
-            );
-            const new_img_path = try std.mem.replaceOwned(u8, allo, img_path, "\\", "\\\\");
-            defer allo.free(new_img_path);
-            defer allo.free(newline);
-            print("{s}\n", .{new_img_path});
-            // _ = try file.write(newline);
-        } else { // don't change line
-            // _ = try file.write(line);
-        }
-    }
+    // parse json
+    const in_file = try std.fs.openFileAbsolute(settings_json_path, .{});
+    defer in_file.close();
+    // read
+    const contents = try in_file.readToEndAlloc(allo, 10 * 1024);
+    defer allo.free(contents);
+    // parse json
+    var tree = try std.json.parseFromSlice(std.json.Value, allo, contents, .{});
+    defer tree.deinit();
+    // access tree
+    const root = tree.value;
+    const profiles = root.object.get("profiles") orelse {
+        return error.MissingField;
+    };
+    const defaults = profiles.object.get("defaults") orelse {
+        return error.MissingField;
+    };
+    var background_img = defaults.object.get("backgroundImage") orelse return error.MissingField;
+    background_img.string = img_path;
+    // turn into file
+    const out_file = try std.fs.createFileAbsolute(
+        "C:\\Users\\bphil\\AppData\\Local\\Packages\\Microsoft.WindowsTerminal_8wekyb3d8bbwe\\LocalState\\settings2.json",
+        .{},
+    );
+    defer out_file.close();
+    var write_stream: std.json.Stringify = .{
+        .writer = &out_file.writer,
+        .options = .{ .whitespace = .indent_2 },
+    };
+    try write_stream.beginObject();
+    try write_stream.objectField("foo");
 }
 
 fn dirExists(abs_path: []const u8) bool {
