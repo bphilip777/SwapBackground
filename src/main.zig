@@ -9,54 +9,60 @@ pub fn main() !void {
     const allo = gpa.allocator();
     defer std.debug.assert(gpa.deinit() == .ok);
     // get home
-    const home: []const u8 = try getHomeDir(allo);
+    const home: []const u8 = try homeDir(allo);
+    defer allo.free(home);
+    print("{s}\n", .{home});
     // wallpapers
     const wallpapers_path = try wallpapersPath(allo, home);
     defer allo.free(wallpapers_path);
-    print("Wallpapers Path: {s}\n", .{wallpapers_path});
+    print("{s}\n", .{wallpapers_path});
     // clone wallpapers
     if (!dirExists(wallpapers_path)) try cloneWallpapers(allo, wallpapers_path);
     // get image name
     const img_name = try pickImage(allo, wallpapers_path);
     defer allo.free(img_name);
     print("{s}\n", .{img_name});
+    // full image name
+    const img_path = try std.fs.path.join(allo, &.{ wallpapers_path, img_name });
+    defer allo.free(img_path);
+    print("{s}\n", .{img_path});
     // env var settings.json
-    const local_dir = std.process.getEnvVarOwned(allo, "LOCALAPPDATA") catch |err| switch (err) {
-        error.EnvironmentVariableNotFound => {
-            print("Local App Data not found.\n", .{});
-            return;
-        },
-        else => return err,
-    };
-    defer allo.free(local_dir);
-    // look for settings.json
-    const settings_json_path = try std.fs.path.join(
-        allo,
-        &.{ home, "AppData\\Local\\Packages\\Microsoft.WindowsTerminal_8wekyb3d8bbwe\\LocalState\\settings.json" },
-    );
+    const settings_json_path = try settingsJson(allo, home);
     defer allo.free(settings_json_path);
-
-    // find new image
-
-    // // read file line by line
-    // var reader = try Reader.init(settings_json_path);
-    // defer reader.deinit();
-    // // init storage
-    // var data: std.ArrayList([]const u8) = try .initCapacity(allo, 1024);
-    // defer data.deinit(allo);
-    // defer for (data.items) |item| allo.free(item);
-    // // reader
-    // while (reader.read()) |line| {
-    //     const newline = try allo.dupe(u8, line);
-    //     try data.append(allo, newline);
-    // }
-    // // write file
-    // for (data.items, 0..) |line, i| {
-    //     // print("{}: {s}\n", .{ i, line });
-    //     if (std.mem.containsAtLeast(u8, line, 1, "\"backgroundImage\"")) {
-    //         print("{}: {s}\n", .{ i, line });
-    //     }
-    // }
+    print("{s}\n", .{settings_json_path});
+    // read file line by line
+    var reader = try Reader.init(settings_json_path);
+    defer reader.deinit();
+    // init storage
+    var data: std.ArrayList([]const u8) = try .initCapacity(allo, 1024);
+    defer data.deinit(allo);
+    defer for (data.items) |item| allo.free(item);
+    // reader
+    while (reader.read()) |line| {
+        const newline = try allo.dupe(u8, line);
+        try data.append(allo, newline);
+    }
+    // write file
+    print("Img path: {s}\n", .{img_path});
+    // var file = try std.fs.createFileAbsolute(settings_json_path, .{});
+    // defer file.close();
+    for (data.items) |line| {
+        if (std.mem.containsAtLeast(u8, line, 1, "\"backgroundImage\"")) { // change line
+            const colon = std.mem.indexOfScalar(u8, line, ':').?;
+            const newline = try std.fmt.allocPrint(
+                allo,
+                "{s}: \"{s}\",\n",
+                .{ line[0..colon], img_path },
+            );
+            const new_img_path = try std.mem.replaceOwned(u8, allo, img_path, "\\", "\\\\");
+            defer allo.free(new_img_path);
+            defer allo.free(newline);
+            print("{s}\n", .{new_img_path});
+            // _ = try file.write(newline);
+        } else { // don't change line
+            // _ = try file.write(line);
+        }
+    }
 }
 
 fn dirExists(abs_path: []const u8) bool {
@@ -67,16 +73,12 @@ fn dirExists(abs_path: []const u8) bool {
     return true;
 }
 
-fn getHomeDir(allo: Allocator) ![]const u8 {
+fn homeDir(allo: Allocator) ![]const u8 {
     const var_name = if (@import("builtin").os.tag == .windows) "USERPROFILE" else "HOME";
-    const home = std.process.getEnvVarOwned(allo, var_name) catch |err| switch (err) {
-        error.EnvironmentVariableNotFound => {
-            print("Home directory not found.\n", .{});
-            return err;
-        },
-        else => return err,
+    return std.process.getEnvVarOwned(allo, var_name) catch |err| switch (err) {
+        error.EnvironmentVariableNotFound => try allo.dupe(u8, "C:\\Users\\bphil"),
+        else => err,
     };
-    return home;
 }
 
 fn match(name: []const u8, needles: []const []const u8) bool {
@@ -90,13 +92,15 @@ fn wallpapersPath(
     home: []const u8,
 ) ![]const u8 {
     // subpaths
-    defer allo.free(home);
     const dir_path_from_home: []const u8 = switch (@import("builtin").os.tag) {
         .windows => "\\Pictures\\Wallpapers",
         .linux, .macos => "/Pictures",
         else => unreachable,
     };
-    return try std.fs.path.join(allo, &.{ home, dir_path_from_home });
+    return try std.fs.path.join(allo, &.{
+        home,
+        dir_path_from_home,
+    });
 }
 
 fn cloneWallpapers(allo: Allocator, path: []const u8) !void {
@@ -152,4 +156,22 @@ fn pickImage(allo: Allocator, pics_path: []const u8) ![]const u8 {
     const name = pics.items[rnd];
     // return copy of the name
     return try allo.dupe(u8, name);
+}
+
+fn settingsJson(allo: Allocator, home: []const u8) ![]const u8 {
+    const local_dir = std.process.getEnvVarOwned(allo, "LOCALAPPDATA") catch |err| switch (err) {
+        error.EnvironmentVariableNotFound => {
+            print("Local App Data not found.\n", .{});
+            return err;
+        },
+        else => return err,
+    };
+    defer allo.free(local_dir);
+    // look for settings.json
+    print("{s}\n", .{home});
+    const new_filepath = try std.fs.path.join(
+        allo,
+        &.{ home, "AppData\\Local\\Packages\\Microsoft.WindowsTerminal_8wekyb3d8bbwe\\LocalState\\settings.json" },
+    );
+    return new_filepath;
 }

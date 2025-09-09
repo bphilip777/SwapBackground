@@ -29,9 +29,8 @@ pub fn read(self: *@This()) ?[]const u8 {
     while (self.end < self.n_bytes) : (self.end += 1) {
         switch (self.line_buf[self.end]) {
             '\n' => {
-                const line = self.line_buf[self.start..self.end];
+                const line = self.line_buf[self.start .. self.end + 1];
                 self.start += @truncate(line.len);
-                self.start += 1;
                 return line;
             },
             else => continue,
@@ -63,9 +62,8 @@ pub fn read(self: *@This()) ?[]const u8 {
     while (self.end < self.n_bytes) : (self.end += 1) {
         switch (self.line_buf[self.end]) {
             '\n' => {
-                const line = self.line_buf[self.start..self.end];
+                const line = self.line_buf[self.start .. self.end + 1];
                 self.start += @truncate(line.len);
-                self.start += 1;
                 return line;
             },
             else => continue,
