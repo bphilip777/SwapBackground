@@ -44,7 +44,10 @@ pub fn main() !void {
     var background_img = defaults.object.get("backgroundImage") orelse return error.MissingField;
     background_img.string = img_path;
     // walk tree
-    try walkJson(tree.value, 0);
+    var data: std.ArrayList(JsonData) = try .initCapacity(allo, 16);
+    defer data.deinit();
+    defer for (data.items) |datum| if (datum.value) |value| allo.free(value);
+    try walkJson(allo, tree.value, 0, &data);
     // turn into file
     // const out_file = try std.fs.createFileAbsolute(
     //     "C:\\Users\\bphil\\AppData\\Local\\Packages\\Microsoft.WindowsTerminal_8wekyb3d8bbwe\\LocalState\\settings2.json",
@@ -170,36 +173,66 @@ fn settingsJson(allo: Allocator, home: []const u8) ![]const u8 {
     return new_filepath;
 }
 
-fn walkJson(value: std.json.Value, depth: usize) !void {
-    var line = [_]u8{' '} ** 1024;
-    const indent = line[0 .. depth * 2];
+const JsonType = enum {
+    object,
+    array,
+    string,
+    integer,
+    number_string,
+    float,
+};
+
+const JsonData = struct {
+    type: JsonType,
+    depth: usize,
+    value: ?[]const u8,
+};
+
+fn walkJson(
+    allo: Allocator,
+    value: std.json.Value,
+    depth: u8,
+    data: *std.ArrayList(JsonData),
+) !void {
     switch (value) {
-        .object => |obj| { // "":{}
-            print("{s}{s}\n", .{ indent, "{" });
-            const indent1 = line[0 .. (depth + 1) * 2];
+        .object => |obj| {
+            try data.append(allo, .{ .type = .object, .depth = depth, .value = null });
             var it = obj.iterator();
             while (it.next()) |entry| {
-                print("{s}{s}:", .{ indent1, entry.key_ptr.* });
-                try walkJson(entry.value_ptr.*, depth + 1);
+                try walkJson(allo, entry.value_ptr.*, depth + 1, data);
             }
-            print("{s}{s},\n", .{ indent, "}" });
+            try data.append(allo, .{ .type = .object_end, .depth = depth, .value = null });
         },
-        .array => |arr| { // "":[],
-            if (arr.items.len > 0) {
-                print("[\n", .{});
-                for (arr.items) |item| {
-                    try walkJson(item, depth + 1);
-                }
-                print("],\n", .{});
-            } else {
-                print("[],\n", .{});
+        .array => |arr| {
+            try data.append(allo, .{ .type = .array, .depth = depth, .value = null });
+            for (arr.items) |item| {
+                try walkJson(allo, item, depth + 1, data);
             }
+            try data.append(allo, .{ .type = .array_end, .depth = depth, .value = null });
         },
-        .string => |s| print("{s}\"{s}\",\n", .{ indent, s }),
-        .integer => |n| print("{s}{d},\n", .{ indent, n }),
-        .float => |f| print("{s}{},\n", .{ indent, f }),
-        .number_string => |s| print("{s}{s}\n", .{ indent, s }),
-        .bool => |b| print("{s}{s},", .{ indent, if (b) "true" else "false" }),
-        .null => print("{s}\n", .{indent}),
+        .string => |s| {
+            const new_str = try allo.dupe(u8, s);
+            try data.append(allo, .{ .type = .string, .depth = depth, .value = new_str });
+        },
+        .integer => |n| {
+            const new_str = try std.fmt.allocPrint(allo, "{}", .{n});
+            try data.append(allo, .{ .type = .integer, .depth = depth, .value = new_str });
+        },
+        .float => |f| {
+            const new_str = try std.fmt.allocPrint(allo, "{}", .{f});
+            try data.append(allo, .{ .type = .float, .depth = depth, .new_str = new_str });
+        },
+        .number_string => |s| {
+            const new_str = try std.fmt.allocPrint(allo, "{}", .{s});
+            try data.append(allo, .{ .type = .number_string, .depth = depth, .value = new_str });
+        },
+        .bool => |b| {
+            const new_str = try std.fmt.allocPrint(allo, "{}", .{b});
+            try data.append(allo, .{ .type = .bool, .depth = depth, .value = new_str });
+        },
+        .null => {
+            const new_str = try std.fmt.allocPrint(allo, "", .{});
+            try data.append(allo, .{ .type = .null, .depth = depth, .value = new_str });
+        },
     }
 }
