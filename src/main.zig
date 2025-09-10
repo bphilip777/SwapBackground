@@ -33,7 +33,7 @@ pub fn main() !void {
     // parse json
     var tree = try std.json.parseFromSlice(std.json.Value, allo, contents, .{});
     defer tree.deinit();
-    // access tree
+    // modify tree
     const root = tree.value;
     const profiles = root.object.get("profiles") orelse {
         return error.MissingField;
@@ -43,18 +43,20 @@ pub fn main() !void {
     };
     var background_img = defaults.object.get("backgroundImage") orelse return error.MissingField;
     background_img.string = img_path;
+    // walk tree
+    try walkJson(tree.value, 0);
     // turn into file
-    const out_file = try std.fs.createFileAbsolute(
-        "C:\\Users\\bphil\\AppData\\Local\\Packages\\Microsoft.WindowsTerminal_8wekyb3d8bbwe\\LocalState\\settings2.json",
-        .{},
-    );
-    defer out_file.close();
-    var write_stream: std.json.Stringify = .{
-        .writer = &out_file.writer,
-        .options = .{ .whitespace = .indent_2 },
-    };
-    try write_stream.beginObject();
-    try write_stream.objectField("foo");
+    // const out_file = try std.fs.createFileAbsolute(
+    //     "C:\\Users\\bphil\\AppData\\Local\\Packages\\Microsoft.WindowsTerminal_8wekyb3d8bbwe\\LocalState\\settings2.json",
+    //     .{},
+    // );
+    // defer out_file.close();
+    // var write_stream: std.json.Stringify = .{
+    //     .writer = &out_file.writer,
+    //     .options = .{ .whitespace = .indent_2 },
+    // };
+    // try write_stream.beginObject();
+    // try write_stream.objectField("foo");
 }
 
 fn dirExists(abs_path: []const u8) bool {
@@ -166,4 +168,38 @@ fn settingsJson(allo: Allocator, home: []const u8) ![]const u8 {
         &.{ home, "AppData\\Local\\Packages\\Microsoft.WindowsTerminal_8wekyb3d8bbwe\\LocalState\\settings.json" },
     );
     return new_filepath;
+}
+
+fn walkJson(value: std.json.Value, depth: usize) !void {
+    var line = [_]u8{' '} ** 1024;
+    const indent = line[0 .. depth * 2];
+    switch (value) {
+        .object => |obj| { // "":{}
+            print("{s}{s}\n", .{ indent, "{" });
+            const indent1 = line[0 .. (depth + 1) * 2];
+            var it = obj.iterator();
+            while (it.next()) |entry| {
+                print("{s}{s}:", .{ indent1, entry.key_ptr.* });
+                try walkJson(entry.value_ptr.*, depth + 1);
+            }
+            print("{s}{s},\n", .{ indent, "}" });
+        },
+        .array => |arr| { // "":[],
+            if (arr.items.len > 0) {
+                print("[\n", .{});
+                for (arr.items) |item| {
+                    try walkJson(item, depth + 1);
+                }
+                print("],\n", .{});
+            } else {
+                print("[],\n", .{});
+            }
+        },
+        .string => |s| print("{s}\"{s}\",\n", .{ indent, s }),
+        .integer => |n| print("{s}{d},\n", .{ indent, n }),
+        .float => |f| print("{s}{},\n", .{ indent, f }),
+        .number_string => |s| print("{s}{s}\n", .{ indent, s }),
+        .bool => |b| print("{s}{s},", .{ indent, if (b) "true" else "false" }),
+        .null => print("{s}\n", .{indent}),
+    }
 }
