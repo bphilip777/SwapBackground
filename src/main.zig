@@ -2,6 +2,9 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const print = std.debug.print;
 
+// TODO:
+// 1. make sure this works for linux + macos, currently only works for windows
+
 pub fn main() !void {
     // mem
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -34,20 +37,20 @@ pub fn main() !void {
     var tree = try std.json.parseFromSlice(std.json.Value, allo, contents, .{});
     defer tree.deinit();
     // modify tree
-    const root = tree.value;
-    const profiles = root.object.get("profiles") orelse {
-        return error.MissingField;
+    var root = tree.value;
+    var profiles = root.object.get("profiles") orelse blk: {
+        const value: std.json.Value = .{ .object = .init(allo) };
+        try root.object.put("profiles", value);
+        break :blk value;
     };
-    const defaults = profiles.object.get("defaults") orelse {
-        return error.MissingField;
+    var defaults = profiles.object.get("defaults") orelse blk: {
+        const value: std.json.Value = .{ .object = .init(allo) };
+        try profiles.object.put("defaults", value);
+        break :blk value;
     };
-    var background_img = defaults.object.get("backgroundImage") orelse return error.MissingField;
-    background_img.string = img_path;
+    try defaults.object.put("backgroundImage", std.json.Value{ .string = img_path });
     // turn into file
-    const out_file = try std.fs.createFileAbsolute(
-        "C:\\Users\\bphil\\AppData\\Local\\Packages\\Microsoft.WindowsTerminal_8wekyb3d8bbwe\\LocalState\\settings2.json",
-        .{},
-    );
+    const out_file = try std.fs.createFileAbsolute(settings_json_path, .{});
     defer out_file.close();
     // walk tree
     var data: std.ArrayList(JsonData) = try .initCapacity(allo, 16);
