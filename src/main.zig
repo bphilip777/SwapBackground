@@ -161,7 +161,6 @@ fn settingsJson(allo: Allocator, home: []const u8) ![]const u8 {
     };
     defer allo.free(local_dir);
     // look for settings.json
-    print("{s}\n", .{home});
     const new_filepath = try std.fs.path.join(
         allo,
         &.{ home, "AppData\\Local\\Packages\\Microsoft.WindowsTerminal_8wekyb3d8bbwe\\LocalState\\settings.json" },
