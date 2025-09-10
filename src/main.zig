@@ -44,67 +44,10 @@ pub fn main() !void {
     var background_img = defaults.object.get("backgroundImage") orelse return error.MissingField;
     background_img.string = img_path;
     // walk tree
-    var data: std.ArrayList(JsonData) = try .initCapacity(allo, 16);
+    var data = try jsonStringify(allo, root);
     defer data.deinit(allo);
     defer for (data.items) |datum| if (datum.value) |value| allo.free(value);
-    try walkJson(allo, tree.value, 0, &data);
-    const spaces = [_]u8{' '} ** 1024;
-    var i: usize = 0;
-    while (i < data.items.len) : (i += 1) {
-        const datum = data.items[i];
-        const indent = spaces[0..(datum.depth * 2)];
-        switch (datum.type) {
-            .object => {
-                if (data.items[i + 1].type == .object_end) {
-                    print("{{", .{});
-                } else {
-                    print("{s}{{\n", .{indent});
-                }
-            },
-            .object_key => {
-                print("{s}\"{s}\": ", .{ indent, datum.value.? });
-            },
-            .object_end => {
-                if ((i + 1 == data.items.len) or data.items[i + 1].depth < datum.depth) {
-                    print("}}\n", .{});
-                } else {
-                    print("{s}}},\n", .{indent});
-                }
-            },
-            .array => {
-                if (data.items[i - 1].type == .object_key) {
-                    print("[", .{});
-                } else {
-                    print("{s}[\n", .{indent});
-                }
-            },
-            .array_end => {
-                if ((i + 1 == data.items.len) or data.items[i + 1].depth < datum.depth) {
-                    print("]\n", .{});
-                } else {
-                    print("{s}],\n", .{indent});
-                }
-            },
-            .integer, .float, .bool => {
-                print("\"{s}\",\n", .{datum.value.?});
-            },
-            // .float => {
-            //     print("{s},\n", .{datum.value.?});
-            // },
-            .number_string, .string => {
-                print("\"{s}\",\n", .{datum.value.?});
-            },
-            // .string => {
-            //     print("\"{s}\",\n", .{datum.value.?});
-            // },
-            // .bool => {
-            //     print("{s},\n", .{datum.value.?});
-            // },
-            .null => {
-                print("\n", .{});
-            },
-        }
-    }
+
     // turn into file
     // const out_file = try std.fs.createFileAbsolute(
     //     "C:\\Users\\bphil\\AppData\\Local\\Packages\\Microsoft.WindowsTerminal_8wekyb3d8bbwe\\LocalState\\settings2.json",
@@ -262,7 +205,7 @@ fn walkJson(
             var it = obj.iterator();
             while (it.next()) |entry| {
                 const new_key = try allo.dupe(u8, entry.key_ptr.*);
-                try data.append(allo, .{ .type = .object_key, .depth = depth, .value = new_key });
+                try data.append(allo, .{ .type = .object_key, .depth = depth + 1, .value = new_key });
                 try walkJson(allo, entry.value_ptr.*, depth + 1, data);
             }
             try data.append(allo, .{ .type = .object_end, .depth = depth, .value = null });
@@ -298,4 +241,51 @@ fn walkJson(
             try data.append(allo, .{ .type = .null, .depth = depth, .value = null });
         },
     }
+}
+
+fn jsonStringify(allo: Allocator, root: std.json.Value) !std.ArrayList(JsonData) {
+    var data: std.ArrayList(JsonData) = try .initCapacity(allo, 16);
+    try walkJson(allo, root, 0, &data);
+    const spaces = [_]u8{' '} ** 1024;
+    var i: usize = 0;
+    while (i < data.items.len) : (i += 1) {
+        const datum = data.items[i];
+        const indent = spaces[0..(datum.depth * 2)];
+        switch (datum.type) {
+            .object => {
+                const new_indent = if (i > 0 and data.items[i - 1].type == .object_key) "" else indent;
+                const new_line = if (i < data.items.len - 1 and data.items[i + 1].type == .object_end) "" else "\n";
+                print("{s}{{{s}", .{ new_indent, new_line });
+            },
+            .object_key => {
+                print("{s}\"{s}\": ", .{ indent, datum.value.? });
+            },
+            .object_end => {
+                const new_indent = if (i > 0 and data.items[i - 1].type == .object) "" else indent;
+                const new_comma = if (i + 1 < data.items.len) "," else "";
+                const new_line = if (i + 1 < data.items.len) "\n" else "";
+                print("{s}}}{s}{s}", .{ new_indent, new_comma, new_line });
+            },
+            .array => {
+                const new_indent = if (data.items[i - 1].type == .object_key) "" else indent;
+                const new_line = if (i + 1 < data.items.len and data.items[i + 1].type == .array_end) "" else "\n";
+                print("{s}[{s}", .{ new_indent, new_line });
+            },
+            .array_end => {
+                const new_indent = if (i > 0 and data.items[i - 1].type == .array) "" else indent;
+                const new_comma = if (i + 1 < data.items.len) "," else "";
+                print("{s}]{s}\n", .{ new_indent, new_comma });
+            },
+            .integer, .float, .bool => {
+                print("\"{s}\",\n", .{datum.value.?});
+            },
+            .number_string, .string => {
+                print("\"{s}\",\n", .{datum.value.?});
+            },
+            .null => {
+                print("\n", .{});
+            },
+        }
+    }
+    return data;
 }
