@@ -7,7 +7,6 @@
     - create wallpapers path
         - if it does not exist - git clone wallpapers into place
     - select random pic from dir
-    - parse settings.json
-    - parse backgound image of specific profile
-    - change to new img path
-    - rewrite entire file
+    - parse settings.json into tree
+    - walk tree -> swap backgroundImage node for new image
+    - write tree

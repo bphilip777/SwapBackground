@@ -2,9 +2,6 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const print = std.debug.print;
 
-// TODO:
-// 1. make sure this works for linux + macos, currently only works for windows
-
 pub fn main() !void {
     // mem
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
