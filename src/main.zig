@@ -45,9 +45,66 @@ pub fn main() !void {
     background_img.string = img_path;
     // walk tree
     var data: std.ArrayList(JsonData) = try .initCapacity(allo, 16);
-    defer data.deinit();
+    defer data.deinit(allo);
     defer for (data.items) |datum| if (datum.value) |value| allo.free(value);
     try walkJson(allo, tree.value, 0, &data);
+    const spaces = [_]u8{' '} ** 1024;
+    var i: usize = 0;
+    while (i < data.items.len) : (i += 1) {
+        const datum = data.items[i];
+        const indent = spaces[0..(datum.depth * 2)];
+        switch (datum.type) {
+            .object => {
+                if (data.items[i + 1].type == .object_end) {
+                    print("{{", .{});
+                } else {
+                    print("{s}{{\n", .{indent});
+                }
+            },
+            .object_key => {
+                print("{s}\"{s}\": ", .{ indent, datum.value.? });
+            },
+            .object_end => {
+                if ((i + 1 == data.items.len) or data.items[i + 1].depth < datum.depth) {
+                    print("}}\n", .{});
+                } else {
+                    print("{s}}},\n", .{indent});
+                }
+            },
+            .array => {
+                if (data.items[i - 1].type == .object_key) {
+                    print("[", .{});
+                } else {
+                    print("{s}[\n", .{indent});
+                }
+            },
+            .array_end => {
+                if ((i + 1 == data.items.len) or data.items[i + 1].depth < datum.depth) {
+                    print("]\n", .{});
+                } else {
+                    print("{s}],\n", .{indent});
+                }
+            },
+            .integer, .float, .bool => {
+                print("\"{s}\",\n", .{datum.value.?});
+            },
+            // .float => {
+            //     print("{s},\n", .{datum.value.?});
+            // },
+            .number_string, .string => {
+                print("\"{s}\",\n", .{datum.value.?});
+            },
+            // .string => {
+            //     print("\"{s}\",\n", .{datum.value.?});
+            // },
+            // .bool => {
+            //     print("{s},\n", .{datum.value.?});
+            // },
+            .null => {
+                print("\n", .{});
+            },
+        }
+    }
     // turn into file
     // const out_file = try std.fs.createFileAbsolute(
     //     "C:\\Users\\bphil\\AppData\\Local\\Packages\\Microsoft.WindowsTerminal_8wekyb3d8bbwe\\LocalState\\settings2.json",
@@ -175,11 +232,16 @@ fn settingsJson(allo: Allocator, home: []const u8) ![]const u8 {
 
 const JsonType = enum {
     object,
+    object_key,
+    object_end,
     array,
+    array_end,
     string,
     integer,
     number_string,
     float,
+    bool,
+    null,
 };
 
 const JsonData = struct {
@@ -199,6 +261,8 @@ fn walkJson(
             try data.append(allo, .{ .type = .object, .depth = depth, .value = null });
             var it = obj.iterator();
             while (it.next()) |entry| {
+                const new_key = try allo.dupe(u8, entry.key_ptr.*);
+                try data.append(allo, .{ .type = .object_key, .depth = depth, .value = new_key });
                 try walkJson(allo, entry.value_ptr.*, depth + 1, data);
             }
             try data.append(allo, .{ .type = .object_end, .depth = depth, .value = null });
@@ -220,19 +284,18 @@ fn walkJson(
         },
         .float => |f| {
             const new_str = try std.fmt.allocPrint(allo, "{}", .{f});
-            try data.append(allo, .{ .type = .float, .depth = depth, .new_str = new_str });
+            try data.append(allo, .{ .type = .float, .depth = depth, .value = new_str });
         },
         .number_string => |s| {
-            const new_str = try std.fmt.allocPrint(allo, "{}", .{s});
+            const new_str = try std.fmt.allocPrint(allo, "{s}", .{s});
             try data.append(allo, .{ .type = .number_string, .depth = depth, .value = new_str });
         },
         .bool => |b| {
-            const new_str = try std.fmt.allocPrint(allo, "{}", .{b});
+            const new_str = if (b) try allo.dupe(u8, "true") else try allo.dupe(u8, "false");
             try data.append(allo, .{ .type = .bool, .depth = depth, .value = new_str });
         },
         .null => {
-            const new_str = try std.fmt.allocPrint(allo, "", .{});
-            try data.append(allo, .{ .type = .null, .depth = depth, .value = new_str });
+            try data.append(allo, .{ .type = .null, .depth = depth, .value = null });
         },
     }
 }
