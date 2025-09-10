@@ -2,6 +2,18 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const print = std.debug.print;
 
+// # TODO:
+// 1. add ability to take arguments:
+//  - use custom local images path
+//  - default to no github use
+//  - add ability to change opacity for current image without having to manually go to settings
+//  - auto create github repo using gh?
+//  - turn off - set backgroundImage
+//  - change the time that the powershell command runs the program
+// 2. add ability to load
+// 3. get it to work on different machines by running below
+//
+
 pub fn main() !void {
     // mem
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -47,7 +59,10 @@ pub fn main() !void {
     };
     try defaults.object.put("backgroundImage", std.json.Value{ .string = img_path });
     // turn into file
-    const out_file = try std.fs.createFileAbsolute(settings_json_path, .{});
+    const out_file = std.fs.createFileAbsolute(settings_json_path, .{}) catch |err| {
+        print("\nCould not open:\n{s}\n", .{settings_json_path});
+        return err;
+    };
     defer out_file.close();
     // walk tree
     var data: std.ArrayList(JsonData) = try .initCapacity(allo, 16);
