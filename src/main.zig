@@ -43,23 +43,19 @@ pub fn main() !void {
     };
     var background_img = defaults.object.get("backgroundImage") orelse return error.MissingField;
     background_img.string = img_path;
+    // turn into file
+    const out_file = try std.fs.createFileAbsolute(
+        "C:\\Users\\bphil\\AppData\\Local\\Packages\\Microsoft.WindowsTerminal_8wekyb3d8bbwe\\LocalState\\settings2.json",
+        .{},
+    );
+    defer out_file.close();
     // walk tree
-    var data = try jsonStringify(allo, root);
+    var data: std.ArrayList(JsonData) = try .initCapacity(allo, 16);
     defer data.deinit(allo);
     defer for (data.items) |datum| if (datum.value) |value| allo.free(value);
-
-    // turn into file
-    // const out_file = try std.fs.createFileAbsolute(
-    //     "C:\\Users\\bphil\\AppData\\Local\\Packages\\Microsoft.WindowsTerminal_8wekyb3d8bbwe\\LocalState\\settings2.json",
-    //     .{},
-    // );
-    // defer out_file.close();
-    // var write_stream: std.json.Stringify = .{
-    //     .writer = &out_file.writer,
-    //     .options = .{ .whitespace = .indent_2 },
-    // };
-    // try write_stream.beginObject();
-    // try write_stream.objectField("foo");
+    try walkJson(allo, root, 0, &data);
+    // write tree
+    try jsonStringify(&data, out_file);
 }
 
 fn dirExists(abs_path: []const u8) bool {
@@ -243,49 +239,82 @@ fn walkJson(
     }
 }
 
-fn jsonStringify(allo: Allocator, root: std.json.Value) !std.ArrayList(JsonData) {
-    var data: std.ArrayList(JsonData) = try .initCapacity(allo, 16);
-    try walkJson(allo, root, 0, &data);
+fn jsonStringify(
+    data: *const std.ArrayList(JsonData),
+    file: std.fs.File,
+) !void {
+    var buffer: [1024]u8 = undefined;
     const spaces = [_]u8{' '} ** 1024;
     var i: usize = 0;
     while (i < data.items.len) : (i += 1) {
         const datum = data.items[i];
         const indent = spaces[0..(datum.depth * 2)];
+        var line: []const u8 = undefined;
         switch (datum.type) {
             .object => {
                 const new_indent = if (i > 0 and data.items[i - 1].type == .object_key) "" else indent;
-                const new_line = if (i < data.items.len - 1 and data.items[i + 1].type == .object_end) "" else "\n";
-                print("{s}{{{s}", .{ new_indent, new_line });
+                const new_line = if (i + 1 < data.items.len and data.items[i + 1].type == .object_end) "" else "\n";
+                line = try std.fmt.bufPrint(&buffer, "{s}{{{s}", .{ new_indent, new_line });
+                // print("{s}{{{s}", .{ new_indent, new_line });
             },
             .object_key => {
-                print("{s}\"{s}\": ", .{ indent, datum.value.? });
+                line = try std.fmt.bufPrint(&buffer, "{s}\"{s}\": ", .{ indent, datum.value.? });
+                // print("{s}\"{s}\": ", .{ indent, datum.value.? });
             },
             .object_end => {
                 const new_indent = if (i > 0 and data.items[i - 1].type == .object) "" else indent;
-                const new_comma = if (i + 1 < data.items.len) "," else "";
+                const new_comma = if (i + 1 < data.items.len and data.items[i + 1].depth == data.items[i].depth) "," else "";
                 const new_line = if (i + 1 < data.items.len) "\n" else "";
-                print("{s}}}{s}{s}", .{ new_indent, new_comma, new_line });
+                line = try std.fmt.bufPrint(&buffer, "{s}}}{s}{s}", .{ new_indent, new_comma, new_line });
+                // print("{s}}}{s}{s}", .{ new_indent, new_comma, new_line });
             },
             .array => {
-                const new_indent = if (data.items[i - 1].type == .object_key) "" else indent;
+                const new_indent = if (i > 0 and data.items[i - 1].type == .object_key) "" else indent;
                 const new_line = if (i + 1 < data.items.len and data.items[i + 1].type == .array_end) "" else "\n";
-                print("{s}[{s}", .{ new_indent, new_line });
+                line = try std.fmt.bufPrint(&buffer, "{s}[{s}", .{ new_indent, new_line });
+                // print("{s}[{s}", .{ new_indent, new_line });
             },
             .array_end => {
                 const new_indent = if (i > 0 and data.items[i - 1].type == .array) "" else indent;
                 const new_comma = if (i + 1 < data.items.len) "," else "";
-                print("{s}]{s}\n", .{ new_indent, new_comma });
+                line = try std.fmt.bufPrint(&buffer, "{s}]{s}\n", .{ new_indent, new_comma });
+                // print("{s}]{s}\n", .{ new_indent, new_comma });
             },
             .integer, .float, .bool => {
-                print("\"{s}\",\n", .{datum.value.?});
+                line = try std.fmt.bufPrint(&buffer, "{s},\n", .{datum.value.?});
+                // print("{s},\n", .{datum.value.?});
             },
-            .number_string, .string => {
-                print("\"{s}\",\n", .{datum.value.?});
+            .number_string => {
+                line = try std.fmt.bufPrint(&buffer, "\"{s}\",\n", .{datum.value.?});
+                // print("\"{s}\",\n", .{datum.value.?});
+            },
+            .string => {
+                var tmp: [1024]u8 = undefined;
+                const old_line = datum.value.?;
+                var k: usize = 0;
+                tmp[0] = old_line[0];
+                for (old_line[1..old_line.len], 1..) |ch, j| {
+                    switch (ch) {
+                        '\\' => {
+                            switch (old_line[j - 1]) {
+                                '\\' => {},
+                                else => {},
+                            }
+                        },
+                        else => {
+                            tmp[k] = ch;
+                            k += 1;
+                        },
+                    }
+                }
+                const new_line = tmp[0..k];
+                line = try std.fmt.bufPrint(&buffer, "\"{s}\",\n", .{new_line});
             },
             .null => {
-                print("\n", .{});
+                line = try std.fmt.bufPrint(&buffer, "{s}", .{"\n"});
+                // print("\n", .{});
             },
         }
+        _ = try file.write(line);
     }
-    return data;
 }
