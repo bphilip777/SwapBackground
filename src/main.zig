@@ -250,10 +250,47 @@ fn jsonStringify(
         const datum = data.items[i];
         const indent = spaces[0..(datum.depth * 2)];
         var line: []const u8 = undefined;
+
+        const new_indent = blk: {
+            break :blk switch (data.items[i].type) {
+                .object => if (i > 0) switch (data.items[i - 1].type) {
+                    .object_key => "",
+                    else => indent,
+                } else "",
+                .object_end => if (i > 0) switch (data.items[i - 1].type) {
+                    .object => "",
+                    else => indent,
+                } else "",
+                .array_end => if (i > 0) switch (data.items[i - 1].type) {
+                    .array => "",
+                    else => indent,
+                } else "",
+                else => break :blk "",
+            };
+        };
+        const new_comma = blk: {
+            if (i + 1 == data.items.len) break :blk "";
+            break :blk switch (data.items[i + 1].type) {
+                .object_end, .array_end => "",
+                else => ",",
+            };
+        };
+        const new_line = blk: {
+            break :blk switch (data.items[i].type) {
+                .object => switch (data.items[i + 1].type) {
+                    .object_end => "",
+                    else => "\n",
+                },
+                .object_end => if (i + 1 < data.items.len) "\n" else "",
+                .array => switch (data.items[i + 1].type) {
+                    .array_end => "",
+                    else => "\n",
+                },
+                else => "\n",
+            };
+        };
         switch (datum.type) {
             .object => {
-                const new_indent = if (i > 0 and data.items[i - 1].type == .object_key) "" else indent;
-                const new_line = if (i + 1 < data.items.len and data.items[i + 1].type == .object_end) "" else "\n";
                 line = try std.fmt.bufPrint(&buffer, "{s}{{{s}", .{ new_indent, new_line });
                 // print("{s}{{{s}", .{ new_indent, new_line });
             },
@@ -262,56 +299,66 @@ fn jsonStringify(
                 // print("{s}\"{s}\": ", .{ indent, datum.value.? });
             },
             .object_end => {
-                const new_indent = if (i > 0 and data.items[i - 1].type == .object) "" else indent;
-                const new_comma = if (i + 1 < data.items.len and data.items[i + 1].depth == data.items[i].depth) "," else "";
-                const new_line = if (i + 1 < data.items.len) "\n" else "";
                 line = try std.fmt.bufPrint(&buffer, "{s}}}{s}{s}", .{ new_indent, new_comma, new_line });
                 // print("{s}}}{s}{s}", .{ new_indent, new_comma, new_line });
             },
             .array => {
-                const new_indent = if (i > 0 and data.items[i - 1].type == .object_key) "" else indent;
-                const new_line = if (i + 1 < data.items.len and data.items[i + 1].type == .array_end) "" else "\n";
                 line = try std.fmt.bufPrint(&buffer, "{s}[{s}", .{ new_indent, new_line });
                 // print("{s}[{s}", .{ new_indent, new_line });
             },
             .array_end => {
-                const new_indent = if (i > 0 and data.items[i - 1].type == .array) "" else indent;
-                const new_comma = if (i + 1 < data.items.len) "," else "";
-                line = try std.fmt.bufPrint(&buffer, "{s}]{s}\n", .{ new_indent, new_comma });
+                line = try std.fmt.bufPrint(&buffer, "{s}]{s}{s}", .{ new_indent, new_comma, new_line });
                 // print("{s}]{s}\n", .{ new_indent, new_comma });
             },
             .integer, .float, .bool => {
-                line = try std.fmt.bufPrint(&buffer, "{s},\n", .{datum.value.?});
+                line = try std.fmt.bufPrint(&buffer, "{s}{s}{s}", .{ datum.value.?, new_comma, new_line });
                 // print("{s},\n", .{datum.value.?});
             },
             .number_string => {
-                line = try std.fmt.bufPrint(&buffer, "\"{s}\",\n", .{datum.value.?});
+                line = try std.fmt.bufPrint(&buffer, "\"{s}\"{s}{s}", .{ datum.value.?, new_comma, new_line });
                 // print("\"{s}\",\n", .{datum.value.?});
             },
             .string => {
                 var tmp: [1024]u8 = undefined;
                 const old_line = datum.value.?;
-                var k: usize = 0;
+                var k: usize = 1;
                 tmp[0] = old_line[0];
                 for (old_line[1..old_line.len], 1..) |ch, j| {
                     switch (ch) {
                         '\\' => {
                             switch (old_line[j - 1]) {
-                                '\\' => {},
-                                else => {},
+                                '\\' => { // second time
+                                    tmp[k] = '\\';
+                                },
+                                else => { // first time
+                                    switch (old_line[j + 1]) {
+                                        '\\' => {
+                                            tmp[k] = '\\';
+                                        },
+                                        else => {
+                                            tmp[k] = '\\';
+                                            tmp[k + 1] = '\\';
+                                            k += 2;
+                                        },
+                                    }
+                                },
                             }
                         },
-                        else => {
+                        else => { // normal case
                             tmp[k] = ch;
                             k += 1;
                         },
                     }
                 }
-                const new_line = tmp[0..k];
-                line = try std.fmt.bufPrint(&buffer, "\"{s}\",\n", .{new_line});
+                const tmp_line = tmp[0..k];
+                line = try std.fmt.bufPrint(
+                    &buffer,
+                    "\"{s}\"{s}{s}",
+                    .{ tmp_line, new_comma, new_line },
+                );
             },
             .null => {
-                line = try std.fmt.bufPrint(&buffer, "{s}", .{"\n"});
+                line = try std.fmt.bufPrint(&buffer, "{s}", .{new_line});
                 // print("\n", .{});
             },
         }
